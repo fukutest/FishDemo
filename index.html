@@ -52,48 +52,45 @@ let fish = {
 let stamina = {
   current: 10,
   max: 10,
-  recoverRate: 10, // 秒あたり回復量
-  recoverCooldown: 0, // 最後の使用から何秒で回復開始
+  recoverRate: 10,
+  recoverCooldown: 0,
   lastUsedTime: 0
 };
 
-  // UI要素取得
-  const accelSlider = document.getElementById('accelSlider');
-  const maxSpeedSlider = document.getElementById('maxSpeedSlider');
-  const dragSlider = document.getElementById('dragSlider');
+// 水深5分割
+const sectionHeight = canvas.height / 5;
+const surfaceY = sectionHeight;
+const calmWaterEndY = sectionHeight * 3;
 
-  // スライダーの変更イベント
-  accelSlider.addEventListener("input", () => {
-    fish.baseAcceleration = parseFloat(accelSlider.value);
-    document.getElementById("accelVal").textContent = accelSlider.value;
-  });
+const waterCurrentStrength = 0.05; // 中層〜底層の水流
+const gravity = 0.3;               // 水上の重力
 
-  maxSpeedSlider.addEventListener("input", () => {
-    fish.maxSpeed = parseFloat(maxSpeedSlider.value);
-    document.getElementById("maxSpeedVal").textContent = maxSpeedSlider.value;
-  });
+const accelSlider = document.getElementById('accelSlider');
+const maxSpeedSlider = document.getElementById('maxSpeedSlider');
+const dragSlider = document.getElementById('dragSlider');
 
-  dragSlider.addEventListener("input", () => {
-    fish.drag = parseFloat(dragSlider.value);
-    document.getElementById("dragVal").textContent = dragSlider.value;
-  });
+accelSlider.addEventListener("input", () => {
+  fish.baseAcceleration = parseFloat(accelSlider.value);
+  document.getElementById("accelVal").textContent = accelSlider.value;
+});
+maxSpeedSlider.addEventListener("input", () => {
+  fish.maxSpeed = parseFloat(maxSpeedSlider.value);
+  document.getElementById("maxSpeedVal").textContent = maxSpeedSlider.value;
+});
+dragSlider.addEventListener("input", () => {
+  fish.drag = parseFloat(dragSlider.value);
+  document.getElementById("dragVal").textContent = dragSlider.value;
+});
 
-let lastTime = performance.now();
-let lastInputTime = 0;
-
-function accelerate(currentTime) {
-  if (stamina.current > 0) {
-    fish.speed += fish.baseAcceleration;
-    if (fish.speed > fish.maxSpeed) fish.speed = fish.maxSpeed;
-    fish.tailSwing = 1.0;
-    stamina.current--;
-    stamina.lastUsedTime = currentTime / 1000;
-  }
-}
+canvas.addEventListener("pointerdown", (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const tapX = e.clientX - rect.left;
+  const tapY = e.clientY - rect.top;
+  accelerateToward(tapX, tapY, performance.now());
+});
 
 function accelerateToward(targetX, targetY, currentTime) {
   if (stamina.current <= 0) return;
-
   const dx = targetX - fish.x;
   const dy = targetY - fish.y;
   const len = Math.sqrt(dx * dx + dy * dy);
@@ -105,7 +102,6 @@ function accelerateToward(targetX, targetY, currentTime) {
   fish.vx += ax;
   fish.vy += ay;
 
-  // スピード制限
   const speed = Math.sqrt(fish.vx * fish.vx + fish.vy * fish.vy);
   if (speed > fish.maxSpeed) {
     const scale = fish.maxSpeed / speed;
@@ -113,38 +109,18 @@ function accelerateToward(targetX, targetY, currentTime) {
     fish.vy *= scale;
   }
 
-  // ここで角度を更新（ユーザー操作のみ）
   fish.angle = Math.atan2(fish.vy, fish.vx);
-
   fish.tailSwing = 1.0;
   stamina.current--;
   stamina.lastUsedTime = currentTime / 1000;
 }
 
-
-
-// 入力イベント（スマホとPC両対応）
-canvas.addEventListener("pointerdown", (e) => {
-  const rect = canvas.getBoundingClientRect();
-  const tapX = e.clientX - rect.left;
-  const tapY = e.clientY - rect.top;
-  accelerateToward(tapX, tapY, performance.now());
-});
-
-
-
-
-const waterCurrentStrength = 0.1; // 水流の上向き力
-const waterCurrentStartY = 320;   // 水流が始まるY座標
-
-　// パーティクル（水流泡）
 const particleCount = 40;
 const particles = [];
-
 for (let i = 0; i < particleCount; i++) {
   particles.push({
     x: Math.random() * canvas.width,
-    y: waterCurrentStartY + Math.random() * (canvas.height - waterCurrentStartY),
+    y: calmWaterEndY + Math.random() * (canvas.height - calmWaterEndY),
     radius: Math.random() * 2 + 1,
     speedY: Math.random() * 0.5 + 2,
     sway: Math.random() * 1 + 0.5,
@@ -152,55 +128,52 @@ for (let i = 0; i < particleCount; i++) {
   });
 }
 
+let lastTime = performance.now();
 function update(currentTime) {
   const deltaTime = (currentTime - lastTime) / 1000;
   lastTime = currentTime;
 
-  // スタミナ回復
   const nowSec = currentTime / 1000;
   if (nowSec - stamina.lastUsedTime > stamina.recoverCooldown) {
     stamina.current += stamina.recoverRate * deltaTime;
     if (stamina.current > stamina.max) stamina.current = stamina.max;
   }
 
-// 水の抵抗
-fish.vx *= fish.drag;
-fish.vy *= fish.drag;
+  // 環境に応じた力の加算
+  if (fish.y < surfaceY) {
+    fish.vy += gravity;
+  } else if (fish.y >= calmWaterEndY) {
+    fish.vx += waterCurrentStrength;
+  }
 
-// 水流の影響（Y方向にのみ）
-if (fish.y > waterCurrentStartY) {
-fish.vy -= waterCurrentStrength;
-}
+  fish.vx *= fish.drag;
+  fish.vy *= fish.drag;
+  fish.x += fish.vx;
+  fish.y += fish.vy;
 
-// 移動
-fish.x += fish.vx;
-fish.y += fish.vy;
-
-
-  // 尾びれの振れ
+  // 尾びれ揺れ
   const swing = Math.sin(currentTime / 100 * Math.PI * 2) * 15 * fish.tailSwing;
   fish.tailSwing *= fish.tailSwingDecay;
 
-  // 描画（前と同じ）
-
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // 背景に水流ゾーンを可視化（任意）
-  ctx.fillStyle = 'rgba(100, 200, 255, 0.2)';
-  ctx.fillRect(0, waterCurrentStartY, canvas.width, canvas.height - waterCurrentStartY);
+  // 水深の色でゾーン可視化
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'; // 水上
+  ctx.fillRect(0, 0, canvas.width, surfaceY);
+  ctx.fillStyle = 'rgba(100, 200, 255, 0.1)'; // 流れなし
+  ctx.fillRect(0, surfaceY, canvas.width, calmWaterEndY - surfaceY);
+  ctx.fillStyle = 'rgba(100, 200, 255, 0.3)'; // 流れあり
+  ctx.fillRect(0, calmWaterEndY, canvas.width, canvas.height - calmWaterEndY);
 
-  // 泡パーティクル更新
+  // 泡
   particles.forEach(p => {
-    p.y -= p.speedY;
-    p.x += Math.sin(performance.now() / 500 + p.swayOffset) * p.sway * 0.1;
-
-    if (p.y < waterCurrentStartY) {
-      p.y = canvas.height;
-      p.x = Math.random() * canvas.width;
+    p.x += p.speedY;
+    p.y += Math.sin(currentTime / 500 + p.swayOffset) * p.sway * 0.1;
+    if (p.x > canvas.width) {
+      p.x = 0;
+      p.y = calmWaterEndY +  Math.random() * sectionHeight*2;
     }
   });
-
-  // 泡パーティクル描画
   ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
   particles.forEach(p => {
     ctx.beginPath();
@@ -208,57 +181,29 @@ fish.y += fish.vy;
     ctx.fill();
   });
 
-//   // 魚
-//   ctx.beginPath();
-//   ctx.arc(fish.x, fish.y, 15, 0, Math.PI * 2);
-//   ctx.fillStyle = '#ff9933';
-//   ctx.fill();
-
-//   // 尾びれ
-//   const tailX = fish.x + swing;
-//   const tailY = fish.y - 25;
-//   ctx.beginPath();
-//   ctx.arc(tailX, tailY, 8, 0, Math.PI * 2);
-//   ctx.fillStyle = '#cc6600';
-//   ctx.fill();
-
-// 進行方向から角度を求める（速度が0でも以前の角度を保持）
-// let angle = Math.atan2(fish.vy, fish.vx);
-// if (fish.vx === 0 && fish.vy === 0) angle = 0; // 停止時の処理（任意）
-
-ctx.save();
-ctx.translate(fish.x, fish.y);  // 魚の位置を原点に
-ctx.rotate(fish.angle);              // 回転
-
-// 魚の体（原点に描画）
-ctx.beginPath();
-ctx.arc(0, 0, 15, 0, Math.PI * 2);
-ctx.fillStyle = '#ff9933';
-ctx.fill();
-
-// 尾びれ（体の後方）
-ctx.beginPath();
-ctx.arc(-25, swing, 8, 0, Math.PI * 2); // 左方向が後方
-ctx.fillStyle = '#cc6600';
-ctx.fill();
-
-ctx.restore(); // 回転と移動を元に戻す
-
+  // 魚の描画（回転含む）
+  ctx.save();
+  ctx.translate(fish.x, fish.y);
+  ctx.rotate(fish.angle);
+  ctx.beginPath();
+  ctx.arc(0, 0, 15, 0, Math.PI * 2);
+  ctx.fillStyle = '#ff9933';
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(-25, swing, 8, 0, Math.PI * 2);
+  ctx.fillStyle = '#cc6600';
+  ctx.fill();
+  ctx.restore();
 
   // スタミナバー
-  const barWidth = 200;
-  const barHeight = 10;
+  const barWidth = 200, barHeight = 10;
   const barX = (canvas.width - barWidth) / 2;
-  const barY = 20;
-
   ctx.fillStyle = '#ccc';
-  ctx.fillRect(barX, barY, barWidth, barHeight);
-
+  ctx.fillRect(barX, 20, barWidth, barHeight);
   ctx.fillStyle = '#33cc66';
-  ctx.fillRect(barX, barY, (stamina.current / stamina.max) * barWidth, barHeight);
-
+  ctx.fillRect(barX, 20, (stamina.current / stamina.max) * barWidth, barHeight);
   ctx.strokeStyle = '#000';
-  ctx.strokeRect(barX, barY, barWidth, barHeight);
+  ctx.strokeRect(barX, 20, barWidth, barHeight);
 
   requestAnimationFrame(update);
 }
