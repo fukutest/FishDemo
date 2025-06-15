@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>魚レース - 連打加速とスタミナ</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #b3ecff;
+    }
+    canvas {
+      display: block;
+      margin: 0 auto;
+      touch-action: none;
+    }
+  </style>
+</head>
+<body>
+<div style="position: absolute; top: 10px; left: 10px; background: rgba(255,255,255,0.8); padding: 10px; border-radius: 8px; font-size: 14px;">
+  <label>加速度: <span id="accelVal">3.0</span>
+    <input type="range" id="accelSlider" min="0.1" max="10" step="0.1" value="3.0">
+  </label><br>
+  <label>最大速度: <span id="maxSpeedVal">4.0</span>
+    <input type="range" id="maxSpeedSlider" min="1" max="20" step="0.1" value="4.0">
+  </label><br>
+  <label>水抵抗: <span id="dragVal">0.98</span>
+    <input type="range" id="dragSlider" min="0.9" max="1.0" step="0.001" value="0.98">
+  </label><br>
+</div>
+<canvas id="gameCanvas" width="360" height="640"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let fish = {
+  x: canvas.width / 2,
+  y: 100,
+  vx: 0,
+  vy: 0,
+  speed: 0,
+  maxSpeed: 4,
+  baseAcceleration: 3.0,
+  tailSwing: 0,
+  tailSwingDecay: 0.9,
+  drag: 0.98,
+  angle: 0
+};
+
+let stamina = {
+  current: 10,
+  max: 10,
+  recoverRate: 10, // 秒あたり回復量
+  recoverCooldown: 0, // 最後の使用から何秒で回復開始
+  lastUsedTime: 0
+};
+
+  // UI要素取得
+  const accelSlider = document.getElementById('accelSlider');
+  const maxSpeedSlider = document.getElementById('maxSpeedSlider');
+  const dragSlider = document.getElementById('dragSlider');
+
+  // スライダーの変更イベント
+  accelSlider.addEventListener("input", () => {
+    fish.baseAcceleration = parseFloat(accelSlider.value);
+    document.getElementById("accelVal").textContent = accelSlider.value;
+  });
+
+  maxSpeedSlider.addEventListener("input", () => {
+    fish.maxSpeed = parseFloat(maxSpeedSlider.value);
+    document.getElementById("maxSpeedVal").textContent = maxSpeedSlider.value;
+  });
+
+  dragSlider.addEventListener("input", () => {
+    fish.drag = parseFloat(dragSlider.value);
+    document.getElementById("dragVal").textContent = dragSlider.value;
+  });
+
+let lastTime = performance.now();
+let lastInputTime = 0;
+
+function accelerate(currentTime) {
+  if (stamina.current > 0) {
+    fish.speed += fish.baseAcceleration;
+    if (fish.speed > fish.maxSpeed) fish.speed = fish.maxSpeed;
+    fish.tailSwing = 1.0;
+    stamina.current--;
+    stamina.lastUsedTime = currentTime / 1000;
+  }
+}
+
+function accelerateToward(targetX, targetY, currentTime) {
+  if (stamina.current <= 0) return;
+
+  const dx = targetX - fish.x;
+  const dy = targetY - fish.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len === 0) return;
+
+  const ax = (dx / len) * fish.baseAcceleration;
+  const ay = (dy / len) * fish.baseAcceleration;
+
+  fish.vx += ax;
+  fish.vy += ay;
+
+  // スピード制限
+  const speed = Math.sqrt(fish.vx * fish.vx + fish.vy * fish.vy);
+  if (speed > fish.maxSpeed) {
+    const scale = fish.maxSpeed / speed;
+    fish.vx *= scale;
+    fish.vy *= scale;
+  }
+
+  // ここで角度を更新（ユーザー操作のみ）
+  fish.angle = Math.atan2(fish.vy, fish.vx);
+
+  fish.tailSwing = 1.0;
+  stamina.current--;
+  stamina.lastUsedTime = currentTime / 1000;
+}
+
+
+
+// 入力イベント（スマホとPC両対応）
+canvas.addEventListener("pointerdown", (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const tapX = e.clientX - rect.left;
+  const tapY = e.clientY - rect.top;
+  accelerateToward(tapX, tapY, performance.now());
+});
+
+
+
+
+const waterCurrentStrength = 0.1; // 水流の上向き力
+const waterCurrentStartY = 320;   // 水流が始まるY座標
+
+　// パーティクル（水流泡）
+const particleCount = 40;
+const particles = [];
+
+for (let i = 0; i < particleCount; i++) {
+  particles.push({
+    x: Math.random() * canvas.width,
+    y: waterCurrentStartY + Math.random() * (canvas.height - waterCurrentStartY),
+    radius: Math.random() * 2 + 1,
+    speedY: Math.random() * 0.5 + 2,
+    sway: Math.random() * 1 + 0.5,
+    swayOffset: Math.random() * Math.PI * 2
+  });
+}
+
+function update(currentTime) {
+  const deltaTime = (currentTime - lastTime) / 1000;
+  lastTime = currentTime;
+
+  // スタミナ回復
+  const nowSec = currentTime / 1000;
+  if (nowSec - stamina.lastUsedTime > stamina.recoverCooldown) {
+    stamina.current += stamina.recoverRate * deltaTime;
+    if (stamina.current > stamina.max) stamina.current = stamina.max;
+  }
+
+// 水の抵抗
+fish.vx *= fish.drag;
+fish.vy *= fish.drag;
+
+// 水流の影響（Y方向にのみ）
+if (fish.y > waterCurrentStartY) {
+fish.vy -= waterCurrentStrength;
+}
+
+// 移動
+fish.x += fish.vx;
+fish.y += fish.vy;
+
+
+  // 尾びれの振れ
+  const swing = Math.sin(currentTime / 100 * Math.PI * 2) * 15 * fish.tailSwing;
+  fish.tailSwing *= fish.tailSwingDecay;
+
+  // 描画（前と同じ）
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // 背景に水流ゾーンを可視化（任意）
+  ctx.fillStyle = 'rgba(100, 200, 255, 0.2)';
+  ctx.fillRect(0, waterCurrentStartY, canvas.width, canvas.height - waterCurrentStartY);
+
+  // 泡パーティクル更新
+  particles.forEach(p => {
+    p.y -= p.speedY;
+    p.x += Math.sin(performance.now() / 500 + p.swayOffset) * p.sway * 0.1;
+
+    if (p.y < waterCurrentStartY) {
+      p.y = canvas.height;
+      p.x = Math.random() * canvas.width;
+    }
+  });
+
+  // 泡パーティクル描画
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+  particles.forEach(p => {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+//   // 魚
+//   ctx.beginPath();
+//   ctx.arc(fish.x, fish.y, 15, 0, Math.PI * 2);
+//   ctx.fillStyle = '#ff9933';
+//   ctx.fill();
+
+//   // 尾びれ
+//   const tailX = fish.x + swing;
+//   const tailY = fish.y - 25;
+//   ctx.beginPath();
+//   ctx.arc(tailX, tailY, 8, 0, Math.PI * 2);
+//   ctx.fillStyle = '#cc6600';
+//   ctx.fill();
+
+// 進行方向から角度を求める（速度が0でも以前の角度を保持）
+// let angle = Math.atan2(fish.vy, fish.vx);
+// if (fish.vx === 0 && fish.vy === 0) angle = 0; // 停止時の処理（任意）
+
+ctx.save();
+ctx.translate(fish.x, fish.y);  // 魚の位置を原点に
+ctx.rotate(fish.angle);              // 回転
+
+// 魚の体（原点に描画）
+ctx.beginPath();
+ctx.arc(0, 0, 15, 0, Math.PI * 2);
+ctx.fillStyle = '#ff9933';
+ctx.fill();
+
+// 尾びれ（体の後方）
+ctx.beginPath();
+ctx.arc(-25, swing, 8, 0, Math.PI * 2); // 左方向が後方
+ctx.fillStyle = '#cc6600';
+ctx.fill();
+
+ctx.restore(); // 回転と移動を元に戻す
+
+
+  // スタミナバー
+  const barWidth = 200;
+  const barHeight = 10;
+  const barX = (canvas.width - barWidth) / 2;
+  const barY = 20;
+
+  ctx.fillStyle = '#ccc';
+  ctx.fillRect(barX, barY, barWidth, barHeight);
+
+  ctx.fillStyle = '#33cc66';
+  ctx.fillRect(barX, barY, (stamina.current / stamina.max) * barWidth, barHeight);
+
+  ctx.strokeStyle = '#000';
+  ctx.strokeRect(barX, barY, barWidth, barHeight);
+
+  requestAnimationFrame(update);
+}
+
+requestAnimationFrame(update);
+</script>
+</body>
+</html>
